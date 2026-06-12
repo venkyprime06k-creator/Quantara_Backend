@@ -2,12 +2,13 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
-import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/index.js';
 import { users, sessions } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
 const router = express.Router();
+
+console.log('🔐 Auth routes initializing...');
 
 // Validation rules
 const signupValidation = [
@@ -21,8 +22,12 @@ const signinValidation = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
-// Sign up
+// ========================================
+// SIGN UP
+// ========================================
 router.post('/signup', signupValidation, async (req, res, next) => {
+  console.log('📝 Signup request received:', req.body.email);
+  
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -38,21 +43,27 @@ router.post('/signup', signupValidation, async (req, res, next) => {
     }
     
     // Hash password
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 10);
     
     // Create user
     const [newUser] = await db.insert(users).values({
       email,
       passwordHash,
       name: name || email.split('@')[0],
-      emailVerified: false,
+      plan: 'free',
+      apiCalls: 0,
     }).returning();
     
-    // Create session
-    const token = jwt.sign({ userId: newUser.id }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN,
-    });
+    console.log('✅ User created:', newUser.id);
     
+    // Create token
+    const token = jwt.sign(
+      { userId: newUser.id, email: newUser.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Create session
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
     
@@ -62,7 +73,6 @@ router.post('/signup', signupValidation, async (req, res, next) => {
       expiresAt,
     });
     
-    // Return user data (excluding sensitive info)
     res.status(201).json({
       user: {
         id: newUser.id,
@@ -73,12 +83,17 @@ router.post('/signup', signupValidation, async (req, res, next) => {
       token,
     });
   } catch (error) {
+    console.error('❌ Signup error:', error);
     next(error);
   }
 });
 
-// Sign in
+// ========================================
+// SIGN IN
+// ========================================
 router.post('/signin', signinValidation, async (req, res, next) => {
+  console.log('🔐 Signin request received:', req.body.email);
+  
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -90,20 +105,27 @@ router.post('/signin', signinValidation, async (req, res, next) => {
     // Find user
     const [user] = await db.select().from(users).where(eq(users.email, email));
     if (!user) {
+      console.log('❌ User not found:', email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
     // Check password
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
+      console.log('❌ Invalid password for:', email);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Create session
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN,
-    });
+    console.log('✅ User authenticated:', user.id);
     
+    // Create token
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Create session
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
     
@@ -123,32 +145,39 @@ router.post('/signin', signinValidation, async (req, res, next) => {
         id: user.id,
         email: user.email,
         name: user.name,
-        plan: user.plan,
+        plan: user.plan || 'free',
       },
       token,
     });
   } catch (error) {
+    console.error('❌ Signin error:', error);
     next(error);
   }
 });
 
-// Sign out
+// ========================================
+// SIGN OUT
+// ========================================
 router.post('/signout', async (req, res, next) => {
+  console.log('👋 Signout request received');
+  
   const token = req.headers.authorization?.split(' ')[1];
   
   if (token) {
     try {
       await db.delete(sessions).where(eq(sessions.token, token));
+      console.log('✅ Session deleted');
     } catch (error) {
-      next(error);
-      return;
+      console.error('❌ Signout error:', error);
     }
   }
   
   res.json({ success: true });
 });
 
-// Get current user
+// ========================================
+// GET CURRENT USER
+// ========================================
 router.get('/me', async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
@@ -178,10 +207,17 @@ router.get('/me', async (req, res, next) => {
       .from(users)
       .where(eq(users.id, session.userId));
     
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    
     res.json(user);
   } catch (error) {
+    console.error('❌ Get user error:', error);
     next(error);
   }
 });
+
+console.log('✅ Auth routes loaded: POST /signup, POST /signin, POST /signout, GET /me');
 
 export default router;
