@@ -7,10 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "db:generate": "drizzle-kit generate:pg",
     "db:migrate": "node scripts/migrate.js",
-    "db:studio": "drizzle-kit studio",
-    "test": "node --test",
     "postinstall": "npm run db:migrate"
   },
   "dependencies": {
